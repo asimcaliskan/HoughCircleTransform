@@ -71,6 +71,6 @@ if __name__ == "__main__":
         file_name = ".\\dataset\\" + str(image_counter) + ".jpg"
         image = read_jpg(file_name)
         gray_image = jpg_to_grayscale(image)
-        circle_hough_transform = CircleHoughTransform(image, gray_image, 1, 1, 10)
+        circle_hough_transform = CircleHoughTransform(image)
         circle_hough_transform.find_circles()
         image_counter += 1
