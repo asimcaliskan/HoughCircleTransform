@@ -1,18 +1,26 @@
+from cmath import cos
 from re import T
 from turtle import left
 from cv2 import Sobel
 import numpy
 import cv2
 from collections import defaultdict
+import math
 
 class CircleHoughTransform:
     def __init__(self, image: numpy.ndarray) -> None:
+        #USER PARAMETERS BEGIN
+        self.max_candidate_center = 200
+        self.max_radius_range = 40
+        #USER PARAMETERS END
+
+
         self.image = image
         self.canny_image = self.get_canny_image()
 
         self.min_radius = 20
-        self.max_radius = 40
-        self.radius_range = self.max_radius - self.min_radius
+        self.max_radius = 80
+
         self.min_center_distance = 20
         self.radiuses =  [i for i in range(self.min_radius, self.max_radius)]
         self.number_of_theta = 360
@@ -26,7 +34,6 @@ class CircleHoughTransform:
         self.sobel_gradient_x :numpy.ndarray = None
         self.sobel_gradient_y : numpy.ndarray = None
         self.sobel_gradient_x, self.sobel_gradient_y = self.get_sobel_gradient()
-        self.max_candidate_center = 50
         
 
     def create_candidate_circles(self)->list:
@@ -66,35 +73,50 @@ class CircleHoughTransform:
         if m == numpy.Inf or m == -numpy.Inf or m == 0:
             pass
         else:
-            b = y_0 - x_0 * m
-            min_y = y_0 - self.radius_range if y_0 - self.radius_range >= 0 else 0
-            max_y = y_0 + self.radius_range if y_0 + self.radius_range < image_height else image_height
-
-            min_x = x_0 - self.radius_range if x_0 - self.radius_range >= 0 else 0
-            max_x = x_0 + self.radius_range if x_0 + self.radius_range < image_width else image_width
-
-            for i in range(-self.radius_range, self.radius_range):
-                x = round(((y_0 + i) - b)/m)
+            theta = math.atan(m)
+            for r in range(-self.max_radius_range, self.max_radius_range):
+                x = r * math.cos(theta) + x_0
+                y = r * math.sin(theta) + y_0
                 if 0 <= x < image_width and 0 <= y < image_height:
-                    line_coordinates.append((x, y))
-                
-                y = round(m*x + b)
-                if 0 <= x < image_width and 0 <= y < image_height:
-                    line_coordinates.append((x, round(y)))
-            """   
-            for y in range(min_y, max_y):
-                x = round((y - b)/m)
-                if 0 <= x < image_width and 0 <= y < image_height:
-                    line_coordinates.append((x, y))
-         
-            for x in range(min_x, max_x):
-                y = round(m*x + b)
-                if 0 <= x < image_width and 0 <= y < image_height:
-                    line_coordinates.append((x, round(y)))
-            """
-        return sorted(list(dict.fromkeys(line_coordinates)), key=lambda i:i[0], reverse=True)
+                    line_coordinates.append((round(x), round(y), abs(r)))
+        return line_coordinates
 
+    def show_candidate_circles(self)->None:
+        edge_indices = numpy.argwhere(self.canny_image[:,:])
+        image_height, image_width = self.canny_image.shape
+        candidate_circle_accumulator = defaultdict(int)
+       
+        for edge_y, edge_x in edge_indices:
+            gradient_x = self.sobel_gradient_x[edge_y, edge_x]
+            gradient_y = self.sobel_gradient_y[edge_y, edge_x]
+            line_coordinates = self.get_line_coordinates(gradient_x, gradient_y, edge_x, edge_y, image_width, image_height)
+            for line_x, line_y in line_coordinates:
+                candidate_circle_accumulator[(line_y, line_x)] += 1
 
+        high_voted_centers = sorted(candidate_circle_accumulator.items(), key=lambda i: i[1], reverse=True)[0: self.max_candidate_center]
+        
+        for candidate_center, vote in high_voted_centers:
+            candidate_center_y, candidate_center_x = candidate_center
+            self.image = cv2.circle(self.image, (candidate_center_x, candidate_center_y), 1, (0,0,255), 1)
+
+        cv2.imshow("Candidate Circles", self.image)
+        cv2.waitKey(0)
+
+    def show_gradient_lines(self):
+        edge_indices = numpy.argwhere(self.canny_image[:,:])
+        image_height, image_width = self.canny_image.shape
+        candidate_circle_accumulator = defaultdict(int)
+
+        for edge_y, edge_x in edge_indices:
+            gradient_x = self.sobel_gradient_x[edge_y, edge_x]
+            gradient_y = self.sobel_gradient_y[edge_y, edge_x]
+            line_coordinates = self.get_line_coordinates(gradient_x, gradient_y, edge_x, edge_y, image_width, image_height)
+            for line_x, line_y in line_coordinates:
+                self.image = cv2.circle(self.image, (line_x, line_y), 1, (0,0,255), 1)
+                candidate_circle_accumulator[(line_y, line_x)] += 1
+
+        cv2.imshow("Gradient Line", self.image)
+        cv2.waitKey(0)     
 
     def find_circles(self)->None:
         edge_indices = numpy.argwhere(self.canny_image[:,:])
@@ -104,21 +126,25 @@ class CircleHoughTransform:
             gradient_x = self.sobel_gradient_x[edge_y, edge_x]
             gradient_y = self.sobel_gradient_y[edge_y, edge_x]
             line_coordinates = self.get_line_coordinates(gradient_x, gradient_y, edge_x, edge_y, image_width, image_height)
-            self.image = cv2.line(self.image, line_coordinates[0], line_coordinates[-1], (0,255,0), 1)
-            for line_x, line_y in line_coordinates:
-                self.image = cv2.circle(self.image, (line_x, line_y), 1, (0,0,255), 1)
-                candidate_circle_accumulator[(line_y, line_x)] += 1
-            break
+            for line_x, line_y, line_length in line_coordinates:
+                candidate_circle_accumulator[(line_y, line_x, line_length)] += 1
 
-        cv2.imshow("asdasd", self.image)
-        cv2.waitKey(0)
-"""         high_voted_centers = sorted(candidate_circle_accumulator.items(), key=lambda i: i[1], reverse=True)[0: 500]
+        high_voted_centers = sorted(candidate_circle_accumulator.items(), key=lambda i: i[1], reverse=True)[0: self.max_candidate_center]
         
+        """for candidate_center, vote in high_voted_centers:
+            candidate_center_y, candidate_center_x, r = candidate_center
+            self.image = cv2.circle(self.image, (candidate_center_x, candidate_center_y), r, (0,0,255), 1)"""
+
+        pixel_threshold = 5
+        postprocess_circles = []
         for candidate_center, vote in high_voted_centers:
-            candidate_center_y, candidate_center_x = candidate_center
-            self.image = cv2.circle(self.image, (candidate_center_x, candidate_center_y), 1, (0,0,255), 1)
-        cv2.imshow("asdasd", self.image)
-        cv2.imshow("asd", self.canny_image)
-        cv2.waitKey(0)
- """
-   
+            candidate_center_y, candidate_center_x, r = candidate_center
+            if all(abs(candidate_center_x - xc) > pixel_threshold or abs(candidate_center_y - yc) > pixel_threshold or abs(r - rc) > pixel_threshold for xc, yc, rc in postprocess_circles):
+                postprocess_circles.append((candidate_center_x, candidate_center_y, r))
+        
+
+        for y, x, r in postprocess_circles:
+            self.image = cv2.circle(self.image, (y, x), r, (0,0,255), 1)
+        
+        cv2.imshow("Output", self.image)
+        cv2.waitKey(0)    
